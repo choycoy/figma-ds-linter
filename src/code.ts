@@ -28,7 +28,9 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
     if (msg.type === "scan") {
       await runScan(msg.scope, msg.checks);
     } else if (msg.type === "select-node") {
-      await selectNode(msg.nodeId);
+      await selectNodes([msg.nodeId]);
+    } else if (msg.type === "select-nodes") {
+      await selectNodes(msg.nodeIds);
     } else if (msg.type === "resize") {
       figma.ui.resize(Math.max(320, msg.width), Math.max(400, msg.height));
     }
@@ -37,13 +39,21 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
   }
 };
 
-async function selectNode(nodeId: string) {
-  const node = await figma.getNodeByIdAsync(nodeId);
-  if (node && "type" in node && node.type !== "PAGE" && node.type !== "DOCUMENT") {
-    const sceneNode = node as SceneNode;
-    figma.currentPage.selection = [sceneNode];
-    figma.viewport.scrollAndZoomIntoView([sceneNode]);
+async function selectNodes(nodeIds: string[]) {
+  const nodes: SceneNode[] = [];
+  for (const id of nodeIds) {
+    const node = await figma.getNodeByIdAsync(id);
+    if (node && "type" in node && node.type !== "PAGE" && node.type !== "DOCUMENT") {
+      nodes.push(node as SceneNode);
+    }
   }
+  if (nodes.length === 0) {
+    figma.notify("선택할 노드를 찾지 못했습니다 (삭제되었을 수 있어요).");
+    return;
+  }
+  figma.currentPage.selection = nodes;
+  figma.viewport.scrollAndZoomIntoView(nodes);
+  if (nodes.length > 1) figma.notify(`${nodes.length}개 위반 노드를 선택했습니다.`);
 }
 
 async function runScan(scope: ScanScope, checks: Record<ViolationType, boolean>) {
