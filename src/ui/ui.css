@@ -133,6 +133,14 @@ body {
 .link:hover {
   text-decoration: underline;
 }
+.summary-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.link.muted {
+  color: var(--text-secondary);
+}
 .filters {
   display: flex;
   gap: 6px;

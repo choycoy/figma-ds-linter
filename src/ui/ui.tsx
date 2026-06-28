@@ -138,17 +138,25 @@ function App() {
               <strong>{violations.length}</strong>개 위반 · {scannedCount}개 노드 검사됨
             </span>
             {visible.length > 0 && (
-              <button
-                className="link"
-                onClick={() =>
-                  postToPlugin({
-                    type: "select-nodes",
-                    nodeIds: [...new Set(visible.map((v) => v.nodeId))],
-                  })
-                }
-              >
-                전체 하이라이트
-              </button>
+              <span className="summary-actions">
+                <button
+                  className="link"
+                  onClick={() =>
+                    postToPlugin({
+                      type: "select-nodes",
+                      nodeIds: [...new Set(visible.map((v) => v.nodeId))],
+                    })
+                  }
+                >
+                  전체 하이라이트
+                </button>
+                <button
+                  className="link muted"
+                  onClick={() => postToPlugin({ type: "clear-highlights" })}
+                >
+                  지우기
+                </button>
+              </span>
             )}
           </div>
           <div className="filters">
