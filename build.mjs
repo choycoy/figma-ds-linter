@@ -49,7 +49,9 @@ const codeCtx = await esbuild.context({
   ...common,
   entryPoints: [path.join(__dirname, "src/code.ts")],
   outfile: path.join(dist, "code.js"),
-  target: "es2020",
+  // Figma's plugin sandbox parser rejects some modern syntax (e.g. optional
+  // catch binding `catch {}`), so down-level the main-thread bundle.
+  target: "es2017",
 });
 
 const uiCtx = await esbuild.context({
