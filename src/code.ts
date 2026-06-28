@@ -31,6 +31,9 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
       await selectNodes([msg.nodeId]);
     } else if (msg.type === "select-nodes") {
       await selectNodes(msg.nodeIds);
+    } else if (msg.type === "clear-highlights") {
+      clearHighlights();
+      figma.notify("하이라이트를 지웠습니다.");
     } else if (msg.type === "resize") {
       figma.ui.resize(Math.max(320, msg.width), Math.max(400, msg.height));
     }
@@ -38,6 +41,37 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
     post({ type: "error", message: err instanceof Error ? err.message : String(err) });
   }
 };
+
+// Remove our overlays when the plugin is closed so nothing is left behind.
+figma.on("close", clearHighlights);
+
+/** pluginData flag marking a node as a highlight overlay we created. */
+const HIGHLIGHT_KEY = "dsLinterHighlight";
+
+function clearHighlights() {
+  const stale = figma.currentPage.findAll((n) => n.getPluginData(HIGHLIGHT_KEY) === "1");
+  for (const n of stale) n.remove();
+}
+
+/** Draw a non-interactive red border overlay around a node so it stands out on the canvas. */
+function drawBorder(node: SceneNode) {
+  const box = node.absoluteBoundingBox;
+  if (!box) return;
+  const rect = figma.createRectangle();
+  rect.name = "⛔ DS Linter Highlight";
+  rect.setPluginData(HIGHLIGHT_KEY, "1");
+  rect.x = box.x;
+  rect.y = box.y;
+  rect.resize(Math.max(box.width, 1), Math.max(box.height, 1));
+  rect.fills = [];
+  rect.strokes = [{ type: "SOLID", color: { r: 0.95, g: 0.28, b: 0.13 } }];
+  rect.strokeWeight = 3;
+  rect.strokeAlign = "OUTSIDE";
+  rect.dashPattern = [8, 4];
+  rect.cornerRadius = 4;
+  rect.locked = true; // not selectable/editable, won't get in the user's way
+  figma.currentPage.appendChild(rect);
+}
 
 async function selectNodes(nodeIds: string[]) {
   const nodes: SceneNode[] = [];
@@ -51,13 +85,18 @@ async function selectNodes(nodeIds: string[]) {
     figma.notify("선택할 노드를 찾지 못했습니다 (삭제되었을 수 있어요).");
     return;
   }
+  clearHighlights();
+  for (const n of nodes) drawBorder(n);
   figma.currentPage.selection = nodes;
   figma.viewport.scrollAndZoomIntoView(nodes);
-  if (nodes.length > 1) figma.notify(`${nodes.length}개 위반 노드를 선택했습니다.`);
+  if (nodes.length > 1) figma.notify(`${nodes.length}개 위반 노드를 표시했습니다.`);
 }
 
 async function runScan(scope: ScanScope, checks: Record<ViolationType, boolean>) {
   post({ type: "scan-started" });
+
+  // Remove leftover overlays first so we never scan our own highlights.
+  clearHighlights();
 
   const roots: readonly SceneNode[] =
     scope === "selection" && figma.currentPage.selection.length > 0
@@ -77,6 +116,11 @@ async function runScan(scope: ScanScope, checks: Record<ViolationType, boolean>)
   let scanned = 0;
 
   for (const node of nodes) {
+    // Never report our own highlight overlays.
+    if (node.getPluginData(HIGHLIGHT_KEY) === "1") {
+      scanned++;
+      continue;
+    }
     if (checks.color) violations.push(...checkColor(node));
     if (checks.typography && node.type === "TEXT") violations.push(...checkTypography(node));
     if (checks.detached && node.type === "INSTANCE") {
