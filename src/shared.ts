@@ -20,6 +20,7 @@ export type ScanScope = "selection" | "page";
 export type UiToPlugin =
   | { type: "scan"; scope: ScanScope; checks: Record<ViolationType, boolean> }
   | { type: "select-node"; nodeId: string }
+  | { type: "select-nodes"; nodeIds: string[] }
   | { type: "resize"; width: number; height: number };
 
 /** Messages sent main thread -> UI. */

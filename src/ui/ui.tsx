@@ -134,7 +134,22 @@ function App() {
       {violations && !scanning && (
         <section className="summary">
           <div className="summary-line">
-            <strong>{violations.length}</strong>개 위반 · {scannedCount}개 노드 검사됨
+            <span>
+              <strong>{violations.length}</strong>개 위반 · {scannedCount}개 노드 검사됨
+            </span>
+            {visible.length > 0 && (
+              <button
+                className="link"
+                onClick={() =>
+                  postToPlugin({
+                    type: "select-nodes",
+                    nodeIds: [...new Set(visible.map((v) => v.nodeId))],
+                  })
+                }
+              >
+                전체 하이라이트
+              </button>
+            )}
           </div>
           <div className="filters">
             <button
