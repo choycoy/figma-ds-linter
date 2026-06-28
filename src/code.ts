@@ -10,7 +10,14 @@ import type {
 const DEFAULT_WIDTH = 380;
 const DEFAULT_HEIGHT = 560;
 
-figma.showUI(__html__, { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, themeColors: true });
+console.log("[ds-linter] plugin code loaded");
+
+try {
+  figma.showUI(__html__, { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, themeColors: true });
+  console.log("[ds-linter] showUI ok");
+} catch (e) {
+  console.error("[ds-linter] showUI failed:", e);
+}
 
 function post(msg: PluginToUi) {
   figma.ui.postMessage(msg);
