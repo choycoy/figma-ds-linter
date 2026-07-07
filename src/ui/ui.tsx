@@ -13,7 +13,6 @@ import type {
   SpellingCandidate,
 } from "../shared";
 import { getRecommendations, checkSpelling, violationKey } from "../ai";
-import { DEFAULT_API_KEY } from "../secret";
 import "./ui.css";
 
 function postToPlugin(msg: UiToPlugin) {
@@ -81,8 +80,17 @@ function App() {
     violationsRef.current = violations;
   }, [violations]);
 
-  // OpenAI API 키는 사용자 입력 없이 코드에 박아둔 기본 키(secret.ts)를 그대로 쓴다.
-  const apiKey = DEFAULT_API_KEY;
+  // OpenAI API 키는 각 사용자가 ⚙에서 직접 입력해 figma.clientStorage(이 기기 로컬)에 저장한다 —
+  // 배포된 번들에 키를 박아두면 누구나 파일을 열어 추출할 수 있어 절대 하드코딩하지 않는다.
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
+  // 메시지 핸들러(마운트 시 한 번만 등록)가 항상 최신 키를 읽도록 ref로 동기화 — apiKey state를
+  // 직접 클로저로 캡처하면, 사용자가 나중에 키를 새로 저장해도 핸들러엔 마운트 시점의(대부분
+  // null인) 값이 그대로 남아 계속 "키 없음"으로 실패하게 된다.
+  const apiKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    apiKeyRef.current = apiKey;
+  }, [apiKey]);
   const [showSettings, setShowSettings] = useState(false);
 
   // 카드 템플릿 (색상 스와치 카드 / 타이포 샘플 카드, 각각 별도)
@@ -102,6 +110,7 @@ function App() {
     postToPlugin({ type: "get-card-template", kind: "typography" });
     postToPlugin({ type: "get-token-source", kind: "color" });
     postToPlugin({ type: "get-token-source", kind: "typography" });
+    postToPlugin({ type: "get-api-key" });
     const handler = (e: MessageEvent) => {
       const msg = e.data.pluginMessage as PluginToUi | undefined;
       if (!msg) return;
@@ -142,6 +151,9 @@ function App() {
           break;
         case "token-source":
           setTokenSource((prev) => ({ ...prev, [msg.kind]: msg.name }));
+          break;
+        case "api-key":
+          setApiKey(msg.key);
           break;
         case "generate-result":
           setGenerating(null);
@@ -226,7 +238,10 @@ function App() {
   ) => {
     const silent = opts?.silent ?? false;
     if (!apiKey) {
-      if (!silent) setAiError("OpenAI API 키가 설정되어 있지 않습니다 (src/secret.ts 확인).");
+      if (!silent) {
+        setShowSettings(true);
+        setAiError("먼저 ⚙ 설정에서 OpenAI API 키를 입력하세요.");
+      }
       return;
     }
     if (!tokenSource.color || !tokenSource.typography) {
@@ -281,9 +296,12 @@ function App() {
   // 아닌지를 결정한다. 그래서 결과를 violations에 직접 추가하고, 교정 액션도 recs에 바로
   // 채워 넣어(추가 추천 단계 없이) 다른 항목들과 동일한 "적용" 버튼 UI를 그대로 재사용한다.
   const runSpellCheck = async (candidates: SpellingCandidate[]) => {
-    if (!apiKey || candidates.length === 0) return;
+    // finish()가 마운트 시 한 번만 등록되는 메시지 핸들러 안에서 호출되므로, apiKey state를
+    // 직접 클로저로 읽으면 항상 마운트 시점 값(대개 null)만 보게 된다 — ref로 최신값을 읽는다.
+    const key = apiKeyRef.current;
+    if (!key || candidates.length === 0) return;
     try {
-      await checkSpelling(apiKey, candidates, (found) => {
+      await checkSpelling(key, candidates, (found) => {
         setViolations((prev) => [...(prev || []), ...found]);
         setRecs((prev) => {
           const next = { ...prev };
@@ -302,11 +320,6 @@ function App() {
       setAiError(err instanceof Error ? err.message : String(err));
     }
   };
-
-  // 검사하기 결과가 들어올 때마다(= violations가 바뀔 때) 버튼을 누를 필요 없이 바로 AI
-  // 추천을 받아온다 — "AI 추천 받기"를 따로 눌러야 하는 게 아니라 검사와 한 번에 나오길
-  // 원한다는 요청. 이 스캔에서 나온 전체 위반을 대상으로 하며(필터 탭과 무관), 키/프레임이
-  // 아직 설정 안 됐거나 추천할 게 없을 땐 조용히 스킵한다.
 
   // 체크박스로 같은 검사 종류(색상/타이포)를 묶은 다른 위반들. 이 항목 자신은 제외.
   const bulkPartners = (v: Violation): Violation[] =>
@@ -428,7 +441,7 @@ function App() {
         <div className="header-row">
           <h1>Design System Linter</h1>
           <button
-            className={`gear ${tokenSource.color && tokenSource.typography ? "" : "gear-warn"}`}
+            className={`gear ${apiKey && tokenSource.color && tokenSource.typography ? "" : "gear-warn"}`}
             title="설정"
             onClick={() => setShowSettings((s) => !s)}
           >
@@ -444,6 +457,49 @@ function App() {
             <button className="link muted" onClick={() => setShowSettings(false)}>
               닫기
             </button>
+          </div>
+
+          <label className="settings-label">OpenAI API 키</label>
+          <p className="settings-hint">
+            AI 추천·맞춤법 검사에 쓰입니다. 이 기기에만 저장되며 OpenAI(api.openai.com)로만 전송됩니다.
+          </p>
+          <div className="settings-actions">
+            <input
+              className="key-input"
+              type="password"
+              placeholder={apiKey ? "새 키로 교체하려면 입력" : "sk-..."}
+              value={apiKeyDraft}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && apiKeyDraft.trim()) {
+                  postToPlugin({ type: "set-api-key", key: apiKeyDraft.trim() });
+                  setApiKeyDraft("");
+                }
+              }}
+            />
+          </div>
+          <div className="settings-actions">
+            <button
+              className="primary small"
+              disabled={!apiKeyDraft.trim()}
+              onClick={() => {
+                postToPlugin({ type: "set-api-key", key: apiKeyDraft.trim() });
+                setApiKeyDraft("");
+              }}
+            >
+              저장
+            </button>
+            <span className="tpl-status">
+              {apiKey ? `설정됨 (${apiKey.slice(0, 5)}…${apiKey.slice(-4)})` : "미설정"}
+            </span>
+            {apiKey && (
+              <button
+                className="link muted"
+                onClick={() => postToPlugin({ type: "clear-api-key" })}
+              >
+                삭제
+              </button>
+            )}
           </div>
 
           <div className="settings-divider" />
