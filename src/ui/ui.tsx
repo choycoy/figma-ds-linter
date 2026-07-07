@@ -127,7 +127,6 @@ function App() {
           break;
         case "scan-result": {
           const result = msg;
-          console.log("[ds-linter] catalog", result.catalog); // 임시: 기존 디자인 시스템 토큰을 제대로 읽어오는지 확인용
           const elapsed = Date.now() - scanStartRef.current;
           const finish = () => {
             setScanning(false);
