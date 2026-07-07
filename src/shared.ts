@@ -130,10 +130,7 @@ export type UiToPlugin =
   | { type: "generate-all-cards"; kind: "color" | "typography" }
   | { type: "set-token-source"; kind: "color" | "typography" }
   | { type: "clear-token-source"; kind: "color" | "typography" }
-  | { type: "get-token-source"; kind: "color" | "typography" }
-  | { type: "get-api-key" }
-  | { type: "set-api-key"; key: string }
-  | { type: "clear-api-key" };
+  | { type: "get-token-source"; kind: "color" | "typography" };
 
 /** Messages sent main thread -> UI. */
 export type PluginToUi =
@@ -150,7 +147,6 @@ export type PluginToUi =
     }
   | { type: "card-template"; kind: "color" | "typography"; name: string | null }
   | { type: "token-source"; kind: "color" | "typography"; name: string | null }
-  | { type: "api-key"; key: string | null }
   | { type: "generate-result"; ok: boolean; message: string }
   | {
       type: "apply-result";
