@@ -100,6 +100,20 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
         name = n ? n.name : null;
       }
       post({ type: "token-source", kind: msg.kind, name });
+    } else if (msg.type === "get-api-key") {
+      const key = await figma.clientStorage.getAsync(API_KEY_STORAGE_KEY);
+      post({ type: "api-key", key: typeof key === "string" && key ? key : null });
+    } else if (msg.type === "set-api-key") {
+      const key = msg.key.trim();
+      if (key) {
+        await figma.clientStorage.setAsync(API_KEY_STORAGE_KEY, key);
+        figma.notify("API 키를 저장했습니다.");
+      }
+      post({ type: "api-key", key: key || null });
+    } else if (msg.type === "clear-api-key") {
+      await figma.clientStorage.deleteAsync(API_KEY_STORAGE_KEY);
+      figma.notify("API 키를 삭제했습니다.");
+      post({ type: "api-key", key: null });
     }
   } catch (err) {
     post({ type: "error", message: err instanceof Error ? err.message : String(err) });
@@ -862,6 +876,9 @@ const TOKEN_SOURCE_KEY: Record<"color" | "typography", string> = {
   color: "colorTokenSourceFrameId",
   typography: "typoTokenSourceFrameId",
 };
+
+/** clientStorage key for the user's own OpenAI API key — local to this machine, never bundled/shared. */
+const API_KEY_STORAGE_KEY = "openaiApiKey";
 
 async function getTokenSourceId(kind: "color" | "typography"): Promise<string | null> {
   const id = await figma.clientStorage.getAsync(TOKEN_SOURCE_KEY[kind]);
