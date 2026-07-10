@@ -41,8 +41,13 @@ function App() {
     spelling: true,
   });
   const [scanning, setScanning] = useState(false);
+  // 검사 버튼 로딩(scanning)은 scan-result 도착 시 바로 꺼지지만, 맞춤법 검사는 그 뒤에도
+  // OpenAI 응답을 기다리며 violations를 계속 추가한다 — 이 동안 뭔가 진행 중임을 알리기 위한 플래그.
+  const [spellChecking, setSpellChecking] = useState(false);
   const [violations, setViolations] = useState<Violation[] | null>(null);
   const [scannedCount, setScannedCount] = useState(0);
+  // 사용자가 "무시"한 항목 수 (지난 검사에서 걸러진 개수) — "숨긴 항목 모두 표시" 버튼에 표시.
+  const [ignoredCount, setIgnoredCount] = useState(0);
   const [filter, setFilter] = useState<ViolationType | "all">("all");
   const [error, setError] = useState<string | null>(null);
 
@@ -61,9 +66,6 @@ function App() {
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const pendingKeyRef = useRef<string | null>(null);
   const violationsRef = useRef<Violation[] | null>(null);
-  // 색상·타이포 AI 추천을 이미 처리한 비-맞춤법 위반 개수. 맞춤법 결과가 뒤늦게 도착해
-  // violations를 갱신할 때 추천을 불필요하게 다시 돌리지 않기 위한 가드.
-  const aiProcessedCountRef = useRef(-1);
   // 체크박스로 묶어서 "같은 액션 일괄 적용"할 대상들. 처리 중엔 ref(핸들러용)+state(스피너 표시용) 둘 다 채움.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkApplyingKeys, setBulkApplyingKeys] = useState<Set<string>>(new Set());
@@ -98,7 +100,9 @@ function App() {
     { color: null, typography: null }
   );
   const [generating, setGenerating] = useState<"color" | "typography" | null>(null);
-  const [genMsg, setGenMsg] = useState<string | null>(null);
+  const [genMsg, setGenMsg] = useState<{ color: string | null; typography: string | null }>(
+    { color: null, typography: null }
+  );
 
   // 토큰 수집 기준 프레임 (색상/타이포 각각, 설정 안 하면 현재 페이지 전체를 훑음)
   const [tokenSource, setTokenSource] = useState<{ color: string | null; typography: string | null }>(
@@ -117,11 +121,11 @@ function App() {
       switch (msg.type) {
         case "scan-started":
           setScanning(true);
+          setSpellChecking(false);
           setError(null);
           setRecs({});
           setApplied(new Set());
           setAiError(null);
-          aiProcessedCountRef.current = -1;
           break;
         case "scan-progress":
           break;
@@ -132,6 +136,7 @@ function App() {
             setScanning(false);
             setViolations(result.violations);
             setScannedCount(result.scannedCount);
+            setIgnoredCount(result.ignoredCount);
             setCatalog(result.catalog);
             if (result.spellingCandidates.length > 0) {
               runSpellCheck(result.spellingCandidates);
@@ -156,10 +161,11 @@ function App() {
           break;
         case "generate-result":
           setGenerating(null);
-          setGenMsg(msg.message);
+          setGenMsg((prev) => ({ ...prev, [msg.kind]: msg.message }));
           break;
         case "apply-result": {
           setNotice(msg.message);
+          setTimeout(() => setNotice(null), 4000);
           const pk = pendingKeyRef.current;
           const bulkKeys = bulkKeysRef.current;
           if (msg.ok) {
@@ -227,32 +233,20 @@ function App() {
     postToPlugin({ type: "scan", scope, checks });
   };
 
-  // silent=true(검사 직후 자동 실행)일 땐 키/프레임 미설정·추천 대상 없음 같은 경우 조용히
-  // 넘어간다 — 매번 스캔할 때마다 설정 패널이 튀어나오면 성가시니, 그런 안내는 사용자가
-  // 직접 "AI 추천 받기"를 눌렀을 때만 보여준다.
-  const runRecommendations = async (
-    list: Violation[],
-    cat: TokenCatalog,
-    opts?: { silent?: boolean }
-  ) => {
-    const silent = opts?.silent ?? false;
+  const runRecommendations = async (list: Violation[], cat: TokenCatalog) => {
     if (!apiKey) {
-      if (!silent) {
-        setShowSettings(true);
-        setAiError("먼저 ⚙ 설정에서 OpenAI API 키를 입력하세요.");
-      }
+      setShowSettings(true);
+      setAiError("먼저 ⚙ 설정에서 OpenAI API 키를 입력하세요.");
       return;
     }
     if (!tokenSource.color || !tokenSource.typography) {
-      if (!silent) {
-        setShowSettings(true);
-        setAiError("먼저 ⚙ 설정에서 색상·타이포 기준 프레임을 지정하세요.");
-      }
+      setShowSettings(true);
+      setAiError("먼저 ⚙ 설정에서 색상·타이포 기준 프레임을 지정하세요.");
       return;
     }
     const fixable = list.filter((v) => v.fix);
     if (fixable.length === 0) {
-      if (!silent) setAiError("AI가 추천할 수 있는(색상·타이포) 항목이 없습니다.");
+      setAiError("AI가 추천할 수 있는(색상·타이포) 항목이 없습니다.");
       return;
     }
     setAiLoading(true);
@@ -277,18 +271,19 @@ function App() {
   // 갖고 있고(runSpellCheck), 저기로 넘기면 색상/타이포 매칭 로직이 액션 없는 조언으로 덮어써버린다.
   const runAi = () => runRecommendations(visible.filter((v) => v.type !== "spelling"), catalog);
 
-  // 검사 결과가 들어올 때마다(= violations가 바뀔 때) 색상·타이포 AI 추천을 자동으로 받아온다.
-  // 맞춤법 결과는 뒤늦게 하나씩 도착해 violations를 계속 갱신하는데(runSpellCheck), 그때마다
-  // 이 effect가 다시 돌면 이미 처리한 색상·타이포 항목까지 API를 반복 호출하게 된다 — 그래서
-  // "처리한 비-맞춤법 항목 개수"를 기록해두고, 그 개수가 그대로면(=맞춤법만 추가된 것) 건너뛴다.
-  useEffect(() => {
-    if (!violations) return;
-    const nonSpelling = violations.filter((v) => v.type !== "spelling");
-    if (nonSpelling.length === aiProcessedCountRef.current) return;
-    aiProcessedCountRef.current = nonSpelling.length;
-    runRecommendations(nonSpelling, catalog, { silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [violations]);
+  // 항목을 무시 목록에 영구 저장 — clientStorage에 남아 다음 검사부터는 아예 결과에 나오지 않는다.
+  const ignoreViolation = (v: Violation) => {
+    const key = violationKey(v);
+    setViolations((prev) => (prev || []).filter((x) => violationKey(x) !== key));
+    postToPlugin({ type: "ignore-violation", key });
+  };
+
+  // 현재 필터에 보이는 항목 전체를 한 번에 무시 목록에 저장.
+  const ignoreAll = (items: Violation[]) => {
+    const keys = new Set(items.map(violationKey));
+    setViolations((prev) => (prev || []).filter((x) => !keys.has(violationKey(x))));
+    for (const v of items) postToPlugin({ type: "ignore-violation", key: violationKey(v) });
+  };
 
   // 맞춤법 검사는 색상/타이포와 달리 후보(텍스트)가 곧 위반 여부를 모르는 상태로 넘어온다 —
   // 색상/타이포처럼 "이미 확정된 위반에 대한 추천"이 아니라, OpenAI 응답 자체가 위반인지
@@ -299,6 +294,7 @@ function App() {
     // 직접 클로저로 읽으면 항상 마운트 시점 값(대개 null)만 보게 된다 — ref로 최신값을 읽는다.
     const key = apiKeyRef.current;
     if (!key || candidates.length === 0) return;
+    setSpellChecking(true);
     try {
       await checkSpelling(key, candidates, (found) => {
         setViolations((prev) => [...(prev || []), ...found]);
@@ -317,6 +313,8 @@ function App() {
       });
     } catch (err) {
       setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSpellChecking(false);
     }
   };
 
@@ -524,14 +522,24 @@ function App() {
               className="primary small"
               disabled={generating !== null || !cardTemplate.color}
               onClick={() => {
-                setGenMsg(null);
+                setGenMsg((prev) => ({ ...prev, color: null }));
                 setGenerating("color");
                 postToPlugin({ type: "generate-all-cards", kind: "color" });
               }}
             >
               {generating === "color" ? "추가 중…" : "카드 없는 변수 추가"}
             </button>
-            {genMsg && <span className="tpl-status">{genMsg}</span>}
+            {genMsg.color && (
+              <span className="tpl-status">
+                {genMsg.color}
+                <button
+                  className="link muted"
+                  onClick={() => setGenMsg((prev) => ({ ...prev, color: null }))}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
           </div>
           {!cardTemplate.color && (
             <p className="settings-hint">템플릿을 먼저 지정해야 생성할 수 있어요.</p>
@@ -560,14 +568,24 @@ function App() {
               className="primary small"
               disabled={generating !== null || !cardTemplate.typography}
               onClick={() => {
-                setGenMsg(null);
+                setGenMsg((prev) => ({ ...prev, typography: null }));
                 setGenerating("typography");
                 postToPlugin({ type: "generate-all-cards", kind: "typography" });
               }}
             >
               {generating === "typography" ? "추가 중…" : "카드 없는 스타일 추가"}
             </button>
-            {genMsg && <span className="tpl-status">{genMsg}</span>}
+            {genMsg.typography && (
+              <span className="tpl-status">
+                {genMsg.typography}
+                <button
+                  className="link muted"
+                  onClick={() => setGenMsg((prev) => ({ ...prev, typography: null }))}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
           </div>
           {!cardTemplate.typography && (
             <p className="settings-hint">템플릿을 먼저 지정해야 생성할 수 있어요.</p>
@@ -655,8 +673,8 @@ function App() {
           ))}
         </div>
 
-        <button className="primary" onClick={runScan} disabled={scanning}>
-          {scanning ? (
+        <button className="primary" onClick={runScan} disabled={scanning || spellChecking}>
+          {scanning || spellChecking ? (
             <span className="applying">
               <span className="spinner spinner-onbrand" /> 검사 중…
             </span>
@@ -689,13 +707,31 @@ function App() {
                 </button>
                 <button
                   className="link muted"
-                  onClick={() => postToPlugin({ type: "clear-highlights" })}
+                  disabled={selected.size === 0}
+                  onClick={() => {
+                    ignoreAll(visible.filter((v) => selected.has(violationKey(v))));
+                    setSelected(new Set());
+                  }}
                 >
-                  지우기
+                  {selected.size > 0 ? `선택 항목 제거 (${selected.size})` : "선택 항목 제거"}
                 </button>
               </span>
             )}
           </div>
+          {ignoredCount > 0 && (
+            <div className="summary-line">
+              <span className="ai-notice">숨긴 항목 {ignoredCount}개</span>
+              <button
+                className="link muted"
+                onClick={() => {
+                  postToPlugin({ type: "clear-ignored" });
+                  setIgnoredCount(0);
+                }}
+              >
+                모두 표시
+              </button>
+            </div>
+          )}
           <div className="filters">
             <button
               className={filter === "all" ? "chip active" : "chip"}
@@ -850,6 +886,16 @@ function App() {
                     <span className="item-msg">{v.message}</span>
                     {v.detail && <span className="item-detail">{v.detail}</span>}
                   </span>
+                </button>
+                <button
+                  className="dismiss-btn"
+                  title="이 항목 무시하기 (다음 검사부터 다시 보이지 않음)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    ignoreViolation(v);
+                  }}
+                >
+                  ×
                 </button>
               </div>
               {rec && (

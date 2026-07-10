@@ -116,12 +116,18 @@ export type FixAction =
 
 export type ScanScope = "selection" | "page";
 
+/** Stable per-violation key (survives re-scans as long as the node isn't deleted) — used both
+ *  to line AI recommendations back up in the UI and to persist the user's ignore list. */
+export function violationKey(v: Violation): string {
+  const field = v.fix && v.fix.kind === "color" ? v.fix.field : "";
+  return `${v.nodeId}::${v.type}::${field}`;
+}
+
 /** Messages sent UI -> main thread. */
 export type UiToPlugin =
   | { type: "scan"; scope: ScanScope; checks: Record<ViolationType, boolean> }
   | { type: "select-node"; nodeId: string }
   | { type: "select-nodes"; nodeIds: string[] }
-  | { type: "clear-highlights" }
   | { type: "resize"; width: number; height: number }
   | { type: "apply"; nodeId: string; action: FixAction }
   | { type: "apply-bulk"; nodeIds: string[]; action: FixAction }
@@ -133,7 +139,9 @@ export type UiToPlugin =
   | { type: "get-token-source"; kind: "color" | "typography" }
   | { type: "get-api-key" }
   | { type: "set-api-key"; key: string }
-  | { type: "clear-api-key" };
+  | { type: "clear-api-key" }
+  | { type: "ignore-violation"; key: string }
+  | { type: "clear-ignored" };
 
 /** Messages sent main thread -> UI. */
 export type PluginToUi =
@@ -147,11 +155,13 @@ export type PluginToUi =
       catalog: TokenCatalog;
       /** Raw text of every scanned TEXT node, present only when the spelling check is enabled. */
       spellingCandidates: SpellingCandidate[];
+      /** How many would-be violations were filtered out by the user's persisted ignore list. */
+      ignoredCount: number;
     }
   | { type: "card-template"; kind: "color" | "typography"; name: string | null }
   | { type: "token-source"; kind: "color" | "typography"; name: string | null }
   | { type: "api-key"; key: string | null }
-  | { type: "generate-result"; ok: boolean; message: string }
+  | { type: "generate-result"; kind: "color" | "typography"; ok: boolean; message: string }
   | {
       type: "apply-result";
       nodeId: string;

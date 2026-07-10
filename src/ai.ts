@@ -2,18 +2,14 @@
 // Runs in the UI iframe (which is allowed to fetch api.openai.com per manifest).
 
 import type { Violation, TokenCatalog, Recommendation, FixAction, SpellingCandidate } from "./shared";
+import { violationKey } from "./shared";
+export { violationKey };
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const MODEL = "gpt-4o-mini";
 const CHUNK = 12; // violations per request (작을수록 병렬↑·부분표시 빠름)
 // 색상·타이포 모두 로컬에서 "가장 가까운" 계산을 하지 않는다 — 정확히 일치하는 토큰만 즉시
 // 처리하고, 나머지는 전부 AI에게 넘겨 카탈로그 전체 맥락(네이밍 컨벤션 등)을 보고 판단하게 한다.
-
-/** Stable per-violation key used to line recommendations back up in the UI. */
-export function violationKey(v: Violation): string {
-  const field = v.fix && v.fix.kind === "color" ? v.fix.field : "";
-  return `${v.nodeId}::${v.type}::${field}`;
-}
 
 interface RawRec {
   index: number;

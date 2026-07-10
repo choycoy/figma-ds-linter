@@ -166,6 +166,11 @@ body {
 .link:hover {
   text-decoration: underline;
 }
+.link:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
 .summary-actions {
   display: flex;
   gap: 10px;
@@ -197,6 +202,7 @@ body {
 .list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 .empty {
   padding: 32px 16px;
@@ -387,6 +393,26 @@ body {
 .item-row .item {
   flex: 1;
 }
+.dismiss-btn {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: 8px 10px 0 0;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  text-align: center;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.dismiss-btn:hover {
+  background: var(--bg-hover);
+  color: var(--danger);
+}
 .selection-bar {
   display: flex;
   flex-direction: column;
@@ -403,6 +429,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .selection-bar-row .name-input {
   flex: 1;
@@ -435,6 +462,7 @@ body {
   gap: 6px;
   padding: 0 16px 10px 16px;
   margin-top: -2px;
+  flex-wrap: wrap;
 }
 .create-row .name-input {
   flex: 1;
