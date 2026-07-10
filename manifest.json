@@ -1,6 +1,6 @@
 {
   "name": "Design System Linter",
-  "id": "figma-ds-linter",
+  "id": "1656225747209520672",
   "api": "1.0.0",
   "main": "dist/code.js",
   "ui": "dist/ui.html",

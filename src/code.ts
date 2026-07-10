@@ -13,6 +13,7 @@ import type {
   LetterSpacingSpec,
   SpellingCandidate,
 } from "./shared";
+import { violationKey } from "./shared";
 
 const DEFAULT_WIDTH = 380;
 const DEFAULT_HEIGHT = 560;
@@ -38,9 +39,6 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
       await selectNodes([msg.nodeId]);
     } else if (msg.type === "select-nodes") {
       await selectNodes(msg.nodeIds);
-    } else if (msg.type === "clear-highlights") {
-      clearHighlights();
-      figma.notify("하이라이트를 지웠습니다.");
     } else if (msg.type === "resize") {
       figma.ui.resize(Math.max(320, msg.width), Math.max(400, msg.height));
     } else if (msg.type === "apply") {
@@ -114,6 +112,13 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
       await figma.clientStorage.deleteAsync(API_KEY_STORAGE_KEY);
       figma.notify("API 키를 삭제했습니다.");
       post({ type: "api-key", key: null });
+    } else if (msg.type === "ignore-violation") {
+      const keys = await getIgnoredKeys();
+      keys.add(msg.key);
+      await saveIgnoredKeys(keys);
+    } else if (msg.type === "clear-ignored") {
+      await saveIgnoredKeys(new Set());
+      figma.notify("숨긴 항목을 모두 복원했습니다 — 다시 검사해주세요.");
     }
   } catch (err) {
     post({ type: "error", message: err instanceof Error ? err.message : String(err) });
@@ -247,7 +252,24 @@ async function runScan(scope: ScanScope, checks: Record<ViolationType, boolean>)
   }
 
   const catalog = await buildCatalog();
-  post({ type: "scan-result", violations, scannedCount: nodes.length, scope, catalog, spellingCandidates });
+
+  const ignored = await getIgnoredKeys();
+  const visibleViolations = violations.filter((v) => !ignored.has(violationKey(v)));
+  // Spelling candidates aren't Violations yet (the OpenAI check that decides pass/fail
+  // hasn't run), so build the same "nodeId::spelling::" shape violationKey() would produce.
+  const visibleSpelling = spellingCandidates.filter((c) => !ignored.has(`${c.nodeId}::spelling::`));
+  const ignoredCount =
+    violations.length - visibleViolations.length + (spellingCandidates.length - visibleSpelling.length);
+
+  post({
+    type: "scan-result",
+    violations: visibleViolations,
+    scannedCount: nodes.length,
+    scope,
+    catalog,
+    spellingCandidates: visibleSpelling,
+    ignoredCount,
+  });
 }
 
 /**
@@ -880,6 +902,18 @@ const TOKEN_SOURCE_KEY: Record<"color" | "typography", string> = {
 /** clientStorage key for the user's own OpenAI API key — local to this machine, never bundled/shared. */
 const API_KEY_STORAGE_KEY = "openaiApiKey";
 
+/** clientStorage key for violation keys the user chose to dismiss — persists across re-scans. */
+const IGNORED_STORAGE_KEY = "ignoredViolationKeys";
+
+async function getIgnoredKeys(): Promise<Set<string>> {
+  const raw = await figma.clientStorage.getAsync(IGNORED_STORAGE_KEY);
+  return new Set(Array.isArray(raw) ? raw : []);
+}
+
+async function saveIgnoredKeys(keys: Set<string>): Promise<void> {
+  await figma.clientStorage.setAsync(IGNORED_STORAGE_KEY, [...keys]);
+}
+
 async function getTokenSourceId(kind: "color" | "typography"): Promise<string | null> {
   const id = await figma.clientStorage.getAsync(TOKEN_SOURCE_KEY[kind]);
   return typeof id === "string" && id ? id : null;
@@ -1111,18 +1145,18 @@ async function generateAllCards() {
   const tplId = await getTemplateId("color");
   if (!tplId) {
     figma.notify("먼저 ⚙에서 카드 템플릿을 지정하세요.");
-    post({ type: "generate-result", ok: false, message: "카드 템플릿 미지정 — ⚙에서 기존 카드를 지정하세요." });
+    post({ type: "generate-result", kind: "color", ok: false, message: "카드 템플릿 미지정 — ⚙에서 기존 카드를 지정하세요." });
     return;
   }
   const tpl = await figma.getNodeByIdAsync(tplId);
   if (!tpl || !("clone" in tpl) || !("parent" in tpl) || !tpl.parent) {
-    post({ type: "generate-result", ok: false, message: "템플릿 노드를 찾지 못했습니다." });
+    post({ type: "generate-result", kind: "color", ok: false, message: "템플릿 노드를 찾지 못했습니다." });
     return;
   }
   const big = templateTooBig(tpl);
   if (big) {
     figma.notify(big, { error: true });
-    post({ type: "generate-result", ok: false, message: big });
+    post({ type: "generate-result", kind: "color", ok: false, message: big });
     return;
   }
   const parent = tpl.parent as BaseNode & ChildrenMixin;
@@ -1161,7 +1195,7 @@ async function generateAllCards() {
     m = "추가할 새 카드가 없습니다 (모든 변수에 카드가 이미 있어요).";
   }
   figma.notify(m);
-  post({ type: "generate-result", ok: true, message: m });
+  post({ type: "generate-result", kind: "color", ok: true, message: m });
 }
 
 /**
@@ -1475,7 +1509,7 @@ async function generateAllTypeCards() {
     m = "추가할 새 카드가 없습니다 (모든 스타일에 카드가 이미 있어요).";
   }
   figma.notify(m);
-  post({ type: "generate-result", ok: true, message: m });
+  post({ type: "generate-result", kind: "typography", ok: true, message: m });
 }
 
 function hexToRgb(hex: string): RGB {
