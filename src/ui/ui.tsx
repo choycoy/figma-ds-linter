@@ -434,23 +434,9 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-row">
-          <h1>Design System Linter</h1>
-          <button
-            className={`gear ${apiKey && tokenSource.color && tokenSource.typography ? "" : "gear-warn"}`}
-            title="설정"
-            onClick={() => setShowSettings((s) => !s)}
-          >
-            ⚙
-          </button>
-        </div>
-        <p className="subtitle">Figma 변수·스타일 기준으로 위반을 찾고 AI가 해결책을 추천합니다.</p>
-      </header>
-
       {showSettings && (
         <section className="settings">
-          <div className="settings-actions">
+          <div className="settings-actions settings-close-row">
             <button className="link muted" onClick={() => setShowSettings(false)}>
               닫기
             </button>
@@ -638,7 +624,19 @@ function App() {
         </section>
       )}
 
+      {!showSettings && (
+      <>
       <section className="controls">
+        <div className="toolbar">
+          <button
+            className={`gear ${apiKey && tokenSource.color && tokenSource.typography ? "" : "gear-warn"}`}
+            onClick={() => setShowSettings((s) => !s)}
+          >
+            <span className="gear-icon" aria-hidden="true">⚙</span>
+            설정
+          </button>
+        </div>
+
         <div className="scope">
           <label className={scope === "page" ? "seg active" : "seg"}>
             <input
@@ -999,6 +997,8 @@ function App() {
           );
         })}
       </section>
+      </>
+      )}
     </div>
   );
 }
