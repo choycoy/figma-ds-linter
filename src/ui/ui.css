@@ -31,27 +31,17 @@ body {
   overflow-x: hidden;
 }
 
-.header {
-  padding: 12px 16px 8px;
-  border-bottom: 1px solid var(--border);
-}
-.header h1 {
-  font-size: 13px;
-  margin: 0;
-  font-weight: 600;
-}
-.subtitle {
-  margin: 2px 0 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
 .controls {
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   border-bottom: 1px solid var(--border);
+}
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -4px;
 }
 
 .scope {
@@ -259,6 +249,7 @@ body {
 .item-msg {
   color: var(--text-secondary);
   overflow-wrap: anywhere;
+  word-break: keep-all;
 }
 .item-detail {
   color: var(--text-secondary);
@@ -267,20 +258,23 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* ---- header gear + settings ---- */
-.header-row {
+/* ---- gear + settings ---- */
+.gear {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-}
-.gear {
+  gap: 4px;
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-secondary);
-  padding: 2px 4px;
+  padding: 3px 6px;
   border-radius: 4px;
+}
+.gear-icon {
+  font-size: 13px;
+  font-weight: 400;
 }
 .gear:hover {
   background: var(--bg-hover);
@@ -312,8 +306,12 @@ body {
 }
 .settings-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+.settings-close-row {
+  justify-content: flex-end;
 }
 .settings-hint {
   margin: 0;
@@ -333,6 +331,8 @@ body {
 .tpl-status {
   font-size: 10px;
   color: var(--text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ---- AI bar ---- */
@@ -392,6 +392,7 @@ body {
 }
 .item-row .item {
   flex: 1;
+  min-width: 0;
 }
 .dismiss-btn {
   flex-shrink: 0;

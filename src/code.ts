@@ -156,6 +156,39 @@ function drawBorder(node: SceneNode) {
   figma.currentPage.appendChild(rect);
 }
 
+/** Walk up to the PageNode a node lives on. A card template/token-source frame can be on a
+ *  different page than the one currently open — figma.currentPage.selection and
+ *  viewport.scrollAndZoomIntoView only accept nodes on the active page, so anything that
+ *  reveals a cross-page node must switch pages first (see revealApplyResult below). */
+function pageOf(node: BaseNode): PageNode | null {
+  let p: BaseNode | null = node;
+  while (p && p.type !== "PAGE") p = "parent" in p ? p.parent : null;
+  return (p as PageNode) ?? null;
+}
+
+/** Draw highlights and select/scroll to what an apply just touched. If a newly-created
+ *  card lives on another page (template/token-source frame set there), switch to it first —
+ *  otherwise figma.currentPage.selection / scrollAndZoomIntoView throw for cross-page nodes. */
+async function revealApplyResult(touched: SceneNode[], revealCard: SceneNode | null) {
+  const revealPage = revealCard ? pageOf(revealCard) : null;
+  if (revealCard && revealPage && revealPage.id !== figma.currentPage.id) {
+    await figma.setCurrentPageAsync(revealPage);
+    clearHighlights();
+    drawBorder(revealCard);
+    figma.currentPage.selection = [revealCard];
+    figma.viewport.scrollAndZoomIntoView([revealCard]);
+    return;
+  }
+  clearHighlights();
+  for (const n of touched.slice(0, 30)) drawBorder(n);
+  figma.currentPage.selection = touched;
+  if (revealCard) {
+    figma.viewport.scrollAndZoomIntoView([revealCard]);
+  } else {
+    panToNodes(touched);
+  }
+}
+
 async function selectNodes(nodeIds: string[]) {
   const nodes: SceneNode[] = [];
   for (const id of nodeIds) {
@@ -168,11 +201,16 @@ async function selectNodes(nodeIds: string[]) {
     figma.notify("선택할 노드를 찾지 못했습니다 (삭제되었을 수 있어요).");
     return;
   }
+  // 스캔 이후 Figma에서 다른 페이지로 이동했을 수 있다 — 노드가 실제로 속한 페이지로 먼저
+  // 전환해야 선택/줌이 가능하다(다른 페이지 노드로 currentPage.selection을 채우면 에러).
+  const page = pageOf(nodes[0]);
+  if (page && page.id !== figma.currentPage.id) await figma.setCurrentPageAsync(page);
+  const onPage = page ? nodes.filter((n) => pageOf(n)?.id === page.id) : nodes;
   clearHighlights();
-  for (const n of nodes) drawBorder(n);
-  figma.currentPage.selection = nodes;
-  panToNodes(nodes);
-  if (nodes.length > 1) figma.notify(`${nodes.length}개 위반 노드를 표시했습니다.`);
+  for (const n of onPage) drawBorder(n);
+  figma.currentPage.selection = onPage;
+  panToNodes(onPage);
+  if (onPage.length > 1) figma.notify(`${onPage.length}개 위반 노드를 표시했습니다.`);
 }
 
 /**
@@ -452,6 +490,13 @@ async function applyFix(nodeId: string, action: FixAction) {
     return;
   }
   const scene = node as SceneNode;
+  // 스캔 이후 Figma에서 다른 페이지로 이동했을 수 있다 — bindVariableEverywhere 같은
+  // figma.currentPage 기반 검색이 엉뚱한 페이지를 훑지 않도록, 노드가 실제로 속한
+  // 페이지로 먼저 전환한다(전환 못하면 이후 selection 설정에서 에러가 난다).
+  const nodePage = pageOf(scene);
+  if (nodePage && nodePage.id !== figma.currentPage.id) {
+    await figma.setCurrentPageAsync(nodePage);
+  }
 
   try {
     let message: string;
@@ -558,17 +603,10 @@ async function applyFix(nodeId: string, action: FixAction) {
         : "";
       message = `✅ '${textStyle.name}' 텍스트 스타일을 ${verb} '${scene.name}'에 적용${cardMsg}했습니다.${fallbackMsg}`;
     }
-    // 어디에 적용됐는지 보이도록 영향받은 노드로 이동·선택·하이라이트.
-    // 대량 바인딩 시 테두리 도배를 막기 위해 최대 30개까지만 그린다(선택은 전부 유지).
-    clearHighlights();
-    for (const n of touched.slice(0, 30)) drawBorder(n);
-    figma.currentPage.selection = touched;
-    // 카드를 만들었으면 그 카드로 줌(새로 그린 게 바로 보이게), 아니면 영향 노드로 팬.
-    if (revealCard) {
-      figma.viewport.scrollAndZoomIntoView([revealCard]);
-    } else {
-      panToNodes(touched);
-    }
+    // 어디에 적용됐는지 보이도록 영향받은 노드로 이동·선택·하이라이트
+    // (대량 바인딩 시 테두리 도배를 막기 위해 최대 30개까지만 그린다 — 선택은 전부 유지,
+    // 새로 만든 카드가 다른 페이지에 있으면 그쪽으로 전환한다).
+    await revealApplyResult(touched, revealCard);
     report(nodeId, true, message, touched.map((n) => n.id));
   } catch (err) {
     report(nodeId, false, err instanceof Error ? err.message : String(err));
@@ -586,6 +624,14 @@ async function applyBulkFix(nodeIds: string[], action: FixAction) {
   let revealCard: SceneNode | null = null; // 생성된 스와치 카드 → 그쪽으로 줌
   let cardMsg = "";
   try {
+    // 스캔 이후 Figma에서 다른 페이지로 이동했을 수 있다 — 선택된 노드들이 실제로 속한
+    // 페이지로 먼저 전환한다(전환 못하면 이후 selection 설정에서 에러가 난다).
+    const firstNode = nodeIds.length > 0 ? await figma.getNodeByIdAsync(nodeIds[0]) : null;
+    const nodePage = firstNode ? pageOf(firstNode) : null;
+    if (nodePage && nodePage.id !== figma.currentPage.id) {
+      await figma.setCurrentPageAsync(nodePage);
+    }
+
     let variable: Variable | null = null;
     let textStyleId: string | null = null;
     if (action.kind === "bind-variable") {
@@ -680,15 +726,8 @@ async function applyBulkFix(nodeIds: string[], action: FixAction) {
     const boundCount = touched.length;
     if (revealCard) touched.push(revealCard); // 화면 이동/선택엔 포함, 연결 카운트엔 미포함
 
-    clearHighlights();
-    for (const n of touched.slice(0, 30)) drawBorder(n);
-    figma.currentPage.selection = touched;
-    // 카드를 만들었으면 그 카드로 줌(새로 그린 게 바로 보이게), 아니면 영향 노드로 팬.
-    if (revealCard) {
-      figma.viewport.scrollAndZoomIntoView([revealCard]);
-    } else {
-      panToNodes(touched);
-    }
+    // 새로 만든 카드가 다른 페이지에 있으면 그쪽으로 전환한다.
+    await revealApplyResult(touched, revealCard);
     const message = `선택한 ${boundCount}개 항목에 일괄 적용했습니다${cardMsg}.`;
     report(nodeIds[0] ?? "", true, message, touched.map((n) => n.id));
   } catch (err) {
@@ -1160,6 +1199,9 @@ async function generateAllCards() {
     return;
   }
   const parent = tpl.parent as BaseNode & ChildrenMixin;
+  // 템플릿이 지금 보고 있는 페이지가 아닌 다른 페이지에 있을 수 있다 — 중복 카드 검사와
+  // 최종 선택/줌은 반드시 템플릿이 실제로 속한 페이지를 기준으로 해야 한다.
+  const page = pageOf(parent) ?? figma.currentPage;
 
   const collections = await figma.variables.getLocalVariableCollectionsAsync();
   const mode = collections[0]?.defaultModeId;
@@ -1167,7 +1209,7 @@ async function generateAllCards() {
 
   // 이미 카드가 있는 변수(swatch <name> 노드 존재)는 건너뛴다.
   const existing = new Set(
-    figma.currentPage.findAll((n) => n.name.indexOf("swatch ") === 0).map((n) => n.name)
+    page.findAll((n) => n.name.indexOf("swatch ") === 0).map((n) => n.name)
   );
 
   const added: SceneNode[] = [];
@@ -1188,6 +1230,7 @@ async function generateAllCards() {
 
   let m: string;
   if (added.length) {
+    if (page.id !== figma.currentPage.id) await figma.setCurrentPageAsync(page);
     figma.currentPage.selection = added;
     figma.viewport.scrollAndZoomIntoView(added);
     m = `${added.length}개 변수 카드를 추가했습니다.`;
@@ -1459,15 +1502,15 @@ async function replaceSampleWithNewFont(oldSample: TextNode, textStyle: TextStyl
  */
 async function generateAllTypeCards() {
   const styles = await figma.getLocalTextStylesAsync();
-  const existing = new Set(
-    figma.currentPage.findAll((n) => n.name.indexOf("type-sample ") === 0).map((n) => n.name)
-  );
+  // 스타일마다 그 폰트/굵기가 실제로 쓰이는 섹션(템플릿)을 각자 찾는데, 그 템플릿들이 서로
+  // 다른 페이지에 있을 수도 있다 — 중복 카드 검사는 각 템플릿이 실제로 속한 페이지 기준으로
+  // 페이지별로 캐싱하고, 새로 만든 카드도 페이지별로 묶어서 관리한다.
+  const existingByPage = new Map<string, Set<string>>();
+  const addedByPage = new Map<string, { page: PageNode; nodes: SceneNode[] }>();
 
-  const added: SceneNode[] = [];
   let skipped = 0;
   for (const s of styles) {
     const cardName = `type-sample ${s.name}`;
-    if (existing.has(cardName)) continue;
 
     // 스타일마다 그 폰트/굵기가 실제로 쓰이는 섹션을 각자 찾는다 — 템플릿 하나를 고정해서
     // 전부 거기 몰아넣으면, 서로 다른 섹션(Title/Subtitle/Body 등)에 있어야 할 스타일들이
@@ -1479,10 +1522,19 @@ async function generateAllTypeCards() {
       continue;
     }
     const parent = tpl.parent as BaseNode & ChildrenMixin;
+    const page = pageOf(parent) ?? figma.currentPage;
+
+    let existing = existingByPage.get(page.id);
+    if (!existing) {
+      existing = new Set(page.findAll((n) => n.name.indexOf("type-sample ") === 0).map((n) => n.name));
+      existingByPage.set(page.id, existing);
+    }
+    if (existing.has(cardName)) continue;
 
     const card = (tpl as SceneNode & { clone(): SceneNode }).clone();
     card.name = cardName;
     parent.appendChild(card);
+    existing.add(cardName);
     const sample = findSampleTextNode(card);
     if (sample) {
       try {
@@ -1493,15 +1545,27 @@ async function generateAllTypeCards() {
         /* 폰트를 못 불러오면 이 카드는 스타일 미적용 상태로 남긴다 */
       }
     }
-    added.push(card);
+    let bucket = addedByPage.get(page.id);
+    if (!bucket) {
+      bucket = { page, nodes: [] };
+      addedByPage.set(page.id, bucket);
+    }
+    bucket.nodes.push(card);
   }
 
+  const totalAdded = [...addedByPage.values()].reduce((n, b) => n + b.nodes.length, 0);
   let m: string;
-  if (added.length) {
-    figma.currentPage.selection = added;
-    figma.viewport.scrollAndZoomIntoView(added);
+  if (totalAdded) {
+    // 여러 페이지에 흩어져 추가됐으면 가장 많이 추가된 페이지로 이동해 선택/줌한다
+    // (Figma는 현재 페이지가 아닌 노드는 선택/줌할 수 없다).
+    const primary = [...addedByPage.values()].sort((a, b) => b.nodes.length - a.nodes.length)[0];
+    if (primary.page.id !== figma.currentPage.id) await figma.setCurrentPageAsync(primary.page);
+    figma.currentPage.selection = primary.nodes;
+    figma.viewport.scrollAndZoomIntoView(primary.nodes);
+    const otherPages = addedByPage.size - 1;
     m =
-      `${added.length}개 텍스트 스타일 카드를 추가했습니다.` +
+      `${totalAdded}개 텍스트 스타일 카드를 추가했습니다.` +
+      (otherPages > 0 ? ` (다른 페이지 ${otherPages}곳에도 추가됨)` : "") +
       (skipped ? ` (${skipped}개는 카드로 추가할 곳을 못 찾아 건너뜀)` : "");
   } else if (skipped) {
     m = `카드로 추가할 곳을 못 찾아 ${skipped}개를 건너뛰었습니다 — ⚙에서 타이포 카드 템플릿 또는 타이포 기준 프레임을 지정하세요.`;
