@@ -1091,16 +1091,23 @@ function findSwatchNode(card: SceneNode): SceneNode | null {
 }
 
 /** Rewrite a cloned card's labels: name → token leaf, HEX/RGB → the new color. */
-async function relabelCard(card: SceneNode, variable: Variable, hex: string) {
+/**
+ * `hex` is null when the plugin couldn't statically resolve the variable's color
+ * (broken/dangling alias, missing mode value, etc.) — the card is still created and
+ * the fill is still bound to the variable (Figma renders whatever it actually
+ * resolves to at runtime, independent of our lookup), but the HEX/RGB labels can't
+ * be filled in and are marked instead so the user knows to check that variable.
+ */
+async function relabelCard(card: SceneNode, variable: Variable, hex: string | null) {
   const texts = (
     "findAll" in card
       ? (card as ChildrenMixin & SceneNode).findAll((n) => n.type === "TEXT")
       : []
   ) as TextNode[];
-  const rgb = hexToRgb(hex);
-  const r = Math.round(rgb.r * 255);
-  const g = Math.round(rgb.g * 255);
-  const b = Math.round(rgb.b * 255);
+  const rgb = hex ? hexToRgb(hex) : null;
+  const r = rgb ? Math.round(rgb.r * 255) : null;
+  const g = rgb ? Math.round(rgb.g * 255) : null;
+  const b = rgb ? Math.round(rgb.b * 255) : null;
   const leaf = variable.name.split("/").pop() || variable.name;
   let nameSet = false;
   for (const t of texts) {
@@ -1112,10 +1119,10 @@ async function relabelCard(card: SceneNode, variable: Variable, hex: string) {
     }
     if (/HEX/i.test(chars)) {
       const idx = chars.search(/#|[0-9A-Fa-f]{6}/);
-      replaceTail(t, idx >= 0 ? idx : chars.length, hex.toUpperCase());
+      replaceTail(t, idx >= 0 ? idx : chars.length, hex ? hex.toUpperCase() : "값 확인 필요");
     } else if (/RGB/i.test(chars)) {
       const idx = chars.search(/\d/);
-      replaceTail(t, idx >= 0 ? idx : chars.length, `${r} ${g} ${b}`);
+      replaceTail(t, idx >= 0 ? idx : chars.length, rgb ? `${r} ${g} ${b}` : "값 확인 필요");
     } else if (!nameSet) {
       t.characters = leaf;
       nameSet = true;
@@ -1186,8 +1193,8 @@ async function generateAllCards() {
   );
 
   const added: SceneNode[] = [];
+  const unresolvedNames: string[] = [];
   let alreadyHasCard = 0;
-  let unresolved = 0;
   for (const v of vars) {
     const cardName = `swatch ${v.name}`;
     if (existing.has(cardName)) {
@@ -1197,11 +1204,11 @@ async function generateAllCards() {
     // 변수마다 실제로 속한 컬렉션/모드에서 값을 읽는다 — 첫 번째 컬렉션의 모드 ID로만 읽으면
     // 다른 컬렉션에 속한 변수(혹은 다른 변수를 참조하는 alias)는 값을 못 찾아 전부 건너뛰게 된다.
     const val = await resolveVariableColor(v.id);
-    if (!val) {
-      unresolved++;
-      continue;
-    }
-    const hex = rgbToHex(val);
+    if (!val) unresolvedNames.push(v.name);
+    // 값을 못 읽었어도 카드는 만들고 변수 바인딩은 그대로 건다 — Figma는 우리 조회 로직과
+    // 무관하게 실제 값을 알아서 렌더링하므로(끊긴 alias가 아닌 이상), 값 텍스트만 못 채울 뿐
+    // 카드 자체를 못 만들 이유는 없다. 사용자가 문서에서 바로 눈으로 확인하고 고칠 수 있다.
+    const hex = val ? rgbToHex(val) : null;
     const card = (tpl as SceneNode & { clone(): SceneNode }).clone();
     card.name = cardName;
     parent.appendChild(card);
@@ -1216,11 +1223,16 @@ async function generateAllCards() {
     if (page.id !== figma.currentPage.id) await figma.setCurrentPageAsync(page);
     figma.currentPage.selection = added;
     figma.viewport.scrollAndZoomIntoView(added);
-    m = `${added.length}개 변수 카드를 추가했습니다.`;
-  } else if (unresolved > 0) {
-    m = `추가할 카드가 없습니다 (카드 있음 ${alreadyHasCard}개, 값을 읽지 못한 변수 ${unresolved}개 — alias 순환 등).`;
+    m =
+      unresolvedNames.length > 0
+        ? `${added.length}개 변수 카드를 추가했습니다 (이 중 값을 확인 못한 변수: ${unresolvedNames
+            .slice(0, 5)
+            .join(", ")}${
+            unresolvedNames.length > 5 ? ` 외 ${unresolvedNames.length - 5}개` : ""
+          } — 카드는 추가됐지만 HEX/RGB 라벨은 직접 확인해주세요).`
+        : `${added.length}개 변수 카드를 추가했습니다.`;
   } else {
-    m = "추가할 새 카드가 없습니다 (모든 변수에 카드가 이미 있어요).";
+    m = `추가할 새 카드가 없습니다 (모든 변수에 카드가 이미 있어요: ${alreadyHasCard}개).`;
   }
   figma.notify(m);
   post({ type: "generate-result", kind: "color", ok: true, message: m });
@@ -1602,7 +1614,10 @@ async function resolveVariableColor(
   const collection = await figma.variables.getVariableCollectionByIdAsync(v.variableCollectionId);
   if (!collection) return undefined;
   const matchedMode = modeName && collection.modes.find((m) => m.name === modeName);
-  const modeId = matchedMode ? matchedMode.modeId : collection.defaultModeId;
+  let modeId = matchedMode ? matchedMode.modeId : collection.defaultModeId;
+  // 변수가 이 컬렉션의 모드가 추가된 이후 값을 한 번도 설정받지 못했으면 defaultModeId에
+  // 값이 없을 수 있다 — 그런 경우 아예 포기하지 말고 실제로 값이 있는 모드로 대신 읽는다.
+  if (!(modeId in v.valuesByMode)) modeId = Object.keys(v.valuesByMode)[0];
   const val = v.valuesByMode[modeId];
   if (val && typeof val === "object") {
     if ("r" in (val as RGB)) return val as RGB;
