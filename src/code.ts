@@ -39,6 +39,9 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
       await selectNodes([msg.nodeId]);
     } else if (msg.type === "select-nodes") {
       await selectNodes(msg.nodeIds);
+    } else if (msg.type === "clear-highlights") {
+      clearHighlights();
+      figma.currentPage.selection = [];
     } else if (msg.type === "resize") {
       figma.ui.resize(Math.max(320, msg.width), Math.max(400, msg.height));
     } else if (msg.type === "apply") {
@@ -1175,8 +1178,6 @@ async function generateAllCards() {
   // 최종 선택/줌은 반드시 템플릿이 실제로 속한 페이지를 기준으로 해야 한다.
   const page = pageOf(parent) ?? figma.currentPage;
 
-  const collections = await figma.variables.getLocalVariableCollectionsAsync();
-  const mode = collections[0]?.defaultModeId;
   const vars = await figma.variables.getLocalVariablesAsync("COLOR");
 
   // 이미 카드가 있는 변수(swatch <name> 노드 존재)는 건너뛴다.
@@ -1185,12 +1186,22 @@ async function generateAllCards() {
   );
 
   const added: SceneNode[] = [];
+  let alreadyHasCard = 0;
+  let unresolved = 0;
   for (const v of vars) {
     const cardName = `swatch ${v.name}`;
-    if (existing.has(cardName)) continue;
-    const val = mode ? v.valuesByMode[mode] : undefined;
-    if (!val || typeof val !== "object" || !("r" in (val as RGB))) continue;
-    const hex = rgbToHex(val as RGB);
+    if (existing.has(cardName)) {
+      alreadyHasCard++;
+      continue;
+    }
+    // 변수마다 실제로 속한 컬렉션/모드에서 값을 읽는다 — 첫 번째 컬렉션의 모드 ID로만 읽으면
+    // 다른 컬렉션에 속한 변수(혹은 다른 변수를 참조하는 alias)는 값을 못 찾아 전부 건너뛰게 된다.
+    const val = await resolveVariableColor(v.id);
+    if (!val) {
+      unresolved++;
+      continue;
+    }
+    const hex = rgbToHex(val);
     const card = (tpl as SceneNode & { clone(): SceneNode }).clone();
     card.name = cardName;
     parent.appendChild(card);
@@ -1206,6 +1217,8 @@ async function generateAllCards() {
     figma.currentPage.selection = added;
     figma.viewport.scrollAndZoomIntoView(added);
     m = `${added.length}개 변수 카드를 추가했습니다.`;
+  } else if (unresolved > 0) {
+    m = `추가할 카드가 없습니다 (카드 있음 ${alreadyHasCard}개, 값을 읽지 못한 변수 ${unresolved}개 — alias 순환 등).`;
   } else {
     m = "추가할 새 카드가 없습니다 (모든 변수에 카드가 이미 있어요).";
   }
