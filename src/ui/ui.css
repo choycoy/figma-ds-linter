@@ -205,6 +205,10 @@ body {
 .link.muted {
   color: var(--text-secondary);
 }
+.link.active {
+  text-decoration: underline;
+  color: var(--danger);
+}
 .filters {
   display: flex;
   gap: 6px;
@@ -255,7 +259,7 @@ body {
   align-items: flex-start;
   transition: background 0.15s ease;
 }
-.item:hover {
+.item-row:hover {
   background: color-mix(in srgb, var(--brand) 8%, var(--glass-bg));
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -462,6 +466,7 @@ body {
 .item-row {
   display: flex;
   align-items: flex-start;
+  transition: background 0.15s ease;
 }
 .item-check {
   flex-shrink: 0;

@@ -50,6 +50,7 @@ function App() {
   const [ignoredCount, setIgnoredCount] = useState(0);
   const [filter, setFilter] = useState<ViolationType | "all">("all");
   const [error, setError] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState(false);
 
   // AI / recommendations
   const [catalog, setCatalog] = useState<TokenCatalog>(EMPTY_CATALOG);
@@ -126,6 +127,7 @@ function App() {
           setRecs({});
           setApplied(new Set());
           setAiError(null);
+          setHighlighted(false);
           break;
         case "scan-progress":
           break;
@@ -517,7 +519,7 @@ function App() {
           <div className="settings-actions">
             <button
               className="primary small"
-              disabled={generating !== null || !cardTemplate.color}
+              disabled={generating === "color" || !cardTemplate.color}
               onClick={() => {
                 setGenMsg((prev) => ({ ...prev, color: null }));
                 setGenerating("color");
@@ -574,7 +576,7 @@ function App() {
           <div className="settings-actions">
             <button
               className="primary small"
-              disabled={generating !== null || !cardTemplate.typography}
+              disabled={generating === "typography" || !cardTemplate.typography}
               onClick={() => {
                 setGenMsg((prev) => ({ ...prev, typography: null }));
                 setGenerating("typography");
@@ -715,15 +717,21 @@ function App() {
             {visible.length > 0 && (
               <span className="summary-actions">
                 <button
-                  className="link"
-                  onClick={() =>
-                    postToPlugin({
-                      type: "select-nodes",
-                      nodeIds: [...new Set(visible.map((v) => v.nodeId))],
-                    })
-                  }
+                  className={highlighted ? "link active" : "link"}
+                  onClick={() => {
+                    if (highlighted) {
+                      postToPlugin({ type: "clear-highlights" });
+                      setHighlighted(false);
+                    } else {
+                      postToPlugin({
+                        type: "select-nodes",
+                        nodeIds: [...new Set(visible.map((v) => v.nodeId))],
+                      });
+                      setHighlighted(true);
+                    }
+                  }}
                 >
-                  전체 하이라이트
+                  {highlighted ? "하이라이트 해제" : "전체 하이라이트"}
                 </button>
                 <button
                   className="link muted"
@@ -898,7 +906,10 @@ function App() {
                 )}
                 <button
                   className="item"
-                  onClick={() => postToPlugin({ type: "select-node", nodeId: v.nodeId })}
+                  onClick={() => {
+                    setHighlighted(true);
+                    postToPlugin({ type: "select-node", nodeId: v.nodeId });
+                  }}
                 >
                   <span className={`badge badge-${v.type}`}>{TYPE_LABEL[v.type]}</span>
                   <span className="item-body">
