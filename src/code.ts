@@ -52,16 +52,14 @@ figma.ui.onmessage = async (msg: UiToPlugin) => {
         figma.notify(`${label} 1개만 선택한 뒤 눌러주세요.`);
         post({ type: "card-template", kind: msg.kind, name: null });
       } else {
-        const big = templateTooBig(sel[0], msg.kind);
-        if (big) {
-          figma.notify(big, { error: true });
-          post({ type: "card-template", kind: msg.kind, name: null });
-        } else {
-          await figma.clientStorage.setAsync(CARD_TEMPLATE_KEY[msg.kind], sel[0].id);
-          figma.notify(`'${sel[0].name}'을(를) 카드 템플릿으로 지정했습니다.`);
-          post({ type: "card-template", kind: msg.kind, name: sel[0].name });
-        }
+        await figma.clientStorage.setAsync(CARD_TEMPLATE_KEY[msg.kind], sel[0].id);
+        figma.notify(`'${sel[0].name}'을(를) 카드 템플릿으로 지정했습니다.`);
+        post({ type: "card-template", kind: msg.kind, name: sel[0].name });
       }
+    } else if (msg.type === "clear-card-template") {
+      await figma.clientStorage.deleteAsync(CARD_TEMPLATE_KEY[msg.kind]);
+      figma.notify("카드 템플릿 지정을 해제했습니다.");
+      post({ type: "card-template", kind: msg.kind, name: null });
     } else if (msg.type === "get-card-template") {
       const id = await getTemplateId(msg.kind);
       let name: string | null = null;
@@ -970,7 +968,7 @@ async function getTokenSourceId(kind: "color" | "typography"): Promise<string | 
  * box also "contains a sample text" but has only ONE text node, so cloning IT produces
  * a stray extra sample dropped inside the existing row instead of a whole new row.
  * Requiring ≥2 texts lands on the individual row and not on an inner box (too few
- * texts) or an outer section wrapping many rows (rejected by templateTooBig anyway).
+ * texts) or an outer section wrapping many rows.
  *
  * Real design-system pages group rows into sections by font WEIGHT (e.g. "Title
  * (Extra Bold)" vs "Body (Regular)" vs "Subtitle (Bold)"), each holding its own
@@ -1005,7 +1003,6 @@ async function resolveTypeCardTemplateId(
       ) {
         return false;
       }
-      if (templateTooBig(n, "typography")) return false;
       if (findSampleTextNode(n as SceneNode) === null) return false;
       const textCount = (n as ChildrenMixin & SceneNode).findAll((c) => c.type === "TEXT").length;
       return textCount >= 2;
@@ -1026,23 +1023,6 @@ async function resolveTypeCardTemplateId(
   });
 
   return fontMatches[0]?.id ?? candidates[0]?.id ?? null;
-}
-
-/**
- * Reject a template that is clearly a whole frame/section, not a single card.
- * Typography rows are naturally much wider than color swatches (label + spec +
- * live sample laid out side by side in one row), so they get a wider width cap;
- * height stays tight either way since a single row/card is never very tall.
- */
-function templateTooBig(node: BaseNode, kind: "color" | "typography" = "color"): string | null {
-  const box = "absoluteBoundingBox" in node ? (node as SceneNode).absoluteBoundingBox : null;
-  const maxWidth = kind === "typography" ? 1200 : 600;
-  if (box && (box.width > maxWidth || box.height > 500)) {
-    return `템플릿이 너무 큽니다 (${Math.round(box.width)}×${Math.round(
-      box.height
-    )}). 전체 프레임 말고 카드 1장만 선택해 지정하세요.`;
-  }
-  return null;
 }
 
 /** Load every font used in a text node so its characters can be edited. */
@@ -1155,8 +1135,6 @@ async function drawSwatchCard(
   if (!tpl || !("clone" in tpl) || !("parent" in tpl) || !tpl.parent) {
     throw new Error("카드 템플릿 노드를 찾지 못했습니다. 다시 지정하세요.");
   }
-  const big = templateTooBig(tpl);
-  if (big) throw new Error(big);
   const parent = tpl.parent as BaseNode & ChildrenMixin;
   const cardName = `swatch ${variable.name}`;
   // 카드가 이미 있으면 새로 안 만들지만, 어디 있는지 찾아서 돌려준다 — 호출부가 그쪽으로
@@ -1190,12 +1168,6 @@ async function generateAllCards() {
   const tpl = await figma.getNodeByIdAsync(tplId);
   if (!tpl || !("clone" in tpl) || !("parent" in tpl) || !tpl.parent) {
     post({ type: "generate-result", kind: "color", ok: false, message: "템플릿 노드를 찾지 못했습니다." });
-    return;
-  }
-  const big = templateTooBig(tpl);
-  if (big) {
-    figma.notify(big, { error: true });
-    post({ type: "generate-result", kind: "color", ok: false, message: big });
     return;
   }
   const parent = tpl.parent as BaseNode & ChildrenMixin;
@@ -1418,8 +1390,6 @@ async function drawTypeCard(
   if (!tpl || !("clone" in tpl) || !("parent" in tpl) || !tpl.parent) {
     throw new Error("카드 템플릿 노드를 찾지 못했습니다. 다시 지정하세요.");
   }
-  const big = templateTooBig(tpl, "typography");
-  if (big) throw new Error(big);
   const parent = tpl.parent as BaseNode & ChildrenMixin;
   const cardName = `type-sample ${textStyle.name}`;
   // 카드가 이미 있으면 새로 안 만들지만, 어디 있는지 찾아서 돌려준다 — 호출부가 그쪽으로
@@ -1517,7 +1487,7 @@ async function generateAllTypeCards() {
     // 전부 그 템플릿이 속한 섹션 하나에만 쌓이는 문제가 생긴다.
     const tplId = await resolveTypeCardTemplateId(s.fontName.family, s.fontName.style);
     const tpl = tplId ? await figma.getNodeByIdAsync(tplId) : null;
-    if (!tpl || !("clone" in tpl) || !("parent" in tpl) || !tpl.parent || templateTooBig(tpl, "typography")) {
+    if (!tpl || !("clone" in tpl) || !("parent" in tpl) || !tpl.parent) {
       skipped++;
       continue;
     }
