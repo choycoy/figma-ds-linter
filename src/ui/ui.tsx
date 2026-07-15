@@ -501,6 +501,17 @@ function App() {
             <span className="tpl-status">
               {cardTemplate.color ? `현재: ${cardTemplate.color}` : "미지정"}
             </span>
+            {cardTemplate.color && (
+              <button
+                className="link muted"
+                onClick={() => {
+                  postToPlugin({ type: "clear-card-template", kind: "color" });
+                  setCardTemplate((prev) => ({ ...prev, color: null }));
+                }}
+              >
+                해제
+              </button>
+            )}
           </div>
 
           <div className="settings-actions">
@@ -547,6 +558,17 @@ function App() {
             <span className="tpl-status">
               {cardTemplate.typography ? `현재: ${cardTemplate.typography}` : "미지정"}
             </span>
+            {cardTemplate.typography && (
+              <button
+                className="link muted"
+                onClick={() => {
+                  postToPlugin({ type: "clear-card-template", kind: "typography" });
+                  setCardTemplate((prev) => ({ ...prev, typography: null }));
+                }}
+              >
+                해제
+              </button>
+            )}
           </div>
 
           <div className="settings-actions">

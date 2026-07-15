@@ -133,6 +133,7 @@ export type UiToPlugin =
   | { type: "apply-bulk"; nodeIds: string[]; action: FixAction }
   | { type: "set-card-template"; kind: "color" | "typography" }
   | { type: "get-card-template"; kind: "color" | "typography" }
+  | { type: "clear-card-template"; kind: "color" | "typography" }
   | { type: "generate-all-cards"; kind: "color" | "typography" }
   | { type: "set-token-source"; kind: "color" | "typography" }
   | { type: "clear-token-source"; kind: "color" | "typography" }
